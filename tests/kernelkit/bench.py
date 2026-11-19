@@ -243,6 +243,42 @@ def _bench_msprof(fn: Callable, num_tests: int = 30,
         shutil.rmtree(prof_dir, ignore_errors=True)
 
 
+def _bench_musa(fn: Callable, num_tests: int = 30,
+                flush_l2: bool = True) -> BenchResult:
+    """Profile real MUSA device events with Kineto."""
+    import torch_musa
+    from torch.profiler import DeviceType
+
+    flush = (
+        torch.empty(128 * 1024 * 1024, dtype=torch.uint8, device="musa")
+        if flush_l2
+        else None
+    )
+    for _ in range(num_tests):
+        if flush is not None:
+            flush.zero_()
+        fn()
+    torch.musa.synchronize()
+
+    with torch.profiler.profile(
+        activities=[torch.profiler.ProfilerActivity.MUSA]
+    ) as profiler:
+        for _ in range(num_tests):
+            if flush is not None:
+                flush.zero_()
+            fn()
+        torch.musa.synchronize()
+
+    kernel_times = {}
+    for event in profiler.events():
+        if event.device_type != DeviceType.PrivateUse1:
+            continue
+        kernel_times.setdefault(event.name, []).append(
+            (event.time_range.start / 1e6, event.time_range.end / 1e6)
+        )
+    return BenchResult(num_tests, kernel_times)
+
+
 def bench(fn: Callable, num_tests: int = 30,
           flush_l2: bool = True) -> BenchResult:
     current_platform = get_current_platform()
@@ -250,6 +286,8 @@ def bench(fn: Callable, num_tests: int = 30,
         return _bench_kineto(fn, num_tests, flush_l2)
     elif current_platform == Platform.ASCEND:
         return _bench_msprof(fn, num_tests, flush_l2)
+    elif current_platform == Platform.MUSA:
+        return _bench_musa(fn, num_tests, flush_l2)
     else:
         raise RuntimeError(f"Unknown platform: {current_platform}")
 

@@ -32,6 +32,8 @@ def run_testcase(p: TestParam, quiet: bool = False, t: Optional[Testcase] = None
     if kk.is_on_ascend_platform():
         # To avoid "Resource_Error_Insufficient_Device_Memory(EL0019): halMemAlloc failed. Failed to allocate 8176795648 bytes device memory requested by the APP module."
         torch.npu.empty_cache()
+    elif kk.is_on_musa_platform():
+        torch.musa.empty_cache()
 
     if not quiet:
         print(f"Running on {p}")
@@ -172,7 +174,11 @@ def run_testcase(p: TestParam, quiet: bool = False, t: Optional[Testcase] = None
     return is_correct
 
 if __name__ == '__main__':
-    torch.set_default_device("npu" if kk.get_current_platform() == kk.Platform.ASCEND else "cuda")
+    default_device = {
+        kk.Platform.ASCEND: "npu",
+        kk.Platform.MUSA: "musa",
+    }.get(kk.get_current_platform(), "cuda")
+    torch.set_default_device(default_device)
 
     parser = argparse.ArgumentParser()
     lib.stick_unit_test_args(parser)
@@ -197,7 +203,7 @@ if __name__ == '__main__':
                 if sv and dtype == torch.bfloat16:
                     # sorted_value is fp32-only
                     continue
-                for b in [random.randint(1, 20), random.randint(1, 100), 121, 512, (4096 if kk.is_on_cuda_platform() else 1024)]:
+                for b in [random.randint(1, 20), random.randint(1, 100), 121, 512, (4096 if (kk.is_on_cuda_platform() or kk.is_on_musa_platform()) else 1024)]:
                     for vocab_size in [
                         1, random.randint(2, 500), 1602, 32768, 123245, 225467, 262144, 418673, 682965, 998123, 1048576, (1 << 23) - 1
                     ]:

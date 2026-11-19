@@ -46,6 +46,8 @@ def set_random_seed(seed: int):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+    if hasattr(torch, "musa") and torch.musa.is_available():
+        torch.musa.manual_seed_all(seed)
 
 class Counter:
     def __init__(self):

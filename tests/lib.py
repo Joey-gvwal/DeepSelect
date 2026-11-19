@@ -208,7 +208,7 @@ class TestParam:
     num_runs: int = 10
 
     def can_run_on_and_clamp(self) -> bool:
-        if kk.is_on_cuda_platform():
+        if kk.is_on_cuda_platform() or kk.is_on_musa_platform():
             return True
         elif kk.is_on_ascend_platform():
             if self.dtype != torch.bfloat16:

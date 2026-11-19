@@ -252,12 +252,42 @@ def build_on_ascend_platform():
     return (ext_modules, AscendBuildExtension)
 
 
+def build_on_musa_platform():
+    from torch_musa.utils.musa_extension import BuildExtension, MUSAExtension
+
+    this_dir = Path(__file__).resolve().parent
+    extension = MUSAExtension(
+        name="deep_select.deep_select_musa_cpp",
+        sources=[str(this_dir / "csrc" / "musa_kernels" / "topk.mu")],
+        include_dirs=[str(this_dir / "csrc" / "3rdparty" / "mutlass" / "include")],
+        extra_compile_args={
+            "cxx": ["-O3"],
+            "mcc": [
+                "-O3",
+                "--offload-arch=mp_31",
+                "-ffast-math",
+                "-Wno-error=address-of-temporary",
+                "-fmusa-flush-denormals-to-zero",
+                "-fno-signed-zeros",
+                "-mllvm",
+                "-mtgpu-opt-level=1",
+                "-mllvm",
+                "-mtgpu-load-store-opt=1",
+                "-mllvm",
+                "-mtgpu-fold-global-ldst=1",
+            ],
+        },
+    )
+    return ([extension], BuildExtension)
+
+
 build_target_platform = kk.get_current_platform()
 overrided_platform = os.environ.get('DEEP_SELECT_BUILD_TARGET_PLATFORM', None)
 if overrided_platform is not None:
     overrided_platform_dict = {
         'CUDA': kk.Platform.CUDA,
         'ASCEND': kk.Platform.ASCEND,
+        'MUSA': kk.Platform.MUSA,
     }
     if overrided_platform not in overrided_platform_dict:
         raise ValueError(f"Invalid `DEEP_SELECT_BUILD_TARGET_PLATFORM`: {overrided_platform}. Available values are {list(overrided_platform_dict.keys())}")
@@ -278,6 +308,8 @@ if build_target_platform == kk.Platform.CUDA:
     ext_modules, build_ext = build_on_cuda_platform()
 elif build_target_platform == kk.Platform.ASCEND:
     ext_modules, build_ext = build_on_ascend_platform()
+elif build_target_platform == kk.Platform.MUSA:
+    ext_modules, build_ext = build_on_musa_platform()
 else:
     raise RuntimeError(f"Unsupported platform: {build_target_platform}.\n(You may use `DEEP_SELECT_BUILD_TARGET_PLATFORM` to explicitly set the target platform for building)")
 

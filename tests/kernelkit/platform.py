@@ -1,5 +1,6 @@
 import enum
 import functools
+import glob
 import subprocess
 import os
 
@@ -7,6 +8,7 @@ import os
 class Platform(enum.Enum):
     CUDA = "CUDA"
     ASCEND = "ASCEND"
+    MUSA = "MUSA"
     CPU_ONLY = "CPU_ONLY"
 
 
@@ -17,6 +19,8 @@ def get_current_platform() -> Platform:
     """
     if os.path.exists("/dev/davinci_manager"):
         return Platform.ASCEND
+    if glob.glob("/dev/mtgpu*"):
+        return Platform.MUSA
     output = subprocess.check_output(["lspci"], text=True)
     if "3D controller: NVIDIA Corporation Device" in output:
         return Platform.CUDA
@@ -67,6 +71,10 @@ def is_on_cuda_platform() -> bool:
 
 def is_on_ascend_platform() -> bool:
     return get_current_platform() == Platform.ASCEND
+
+
+def is_on_musa_platform() -> bool:
+    return get_current_platform() == Platform.MUSA
 
 
 def is_on_cpu_only_platform() -> bool:

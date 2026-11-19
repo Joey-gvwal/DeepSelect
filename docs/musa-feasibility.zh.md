@@ -20,8 +20,7 @@ git submodule update --init --recursive
 
 ## 结论
 
-DeepSelect 已提供不依赖 TileLang 的原生 MUSA 后端。公共
-`deep_select.topk` 接口与 CUDA/Ascend 后端保持一致；除上游公共接口本身
+公共 `deep_select.topk` 接口与 CUDA/Ascend 后端保持一致；除上游公共接口本身
 不支持的 `begin` 和 `hint` 外，非空合法输入都由 MUSA C++/`.mu` kernel
 处理，不回退到 `torch.topk`。
 

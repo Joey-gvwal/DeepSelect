@@ -151,8 +151,7 @@ All MUSA benchmark suites share the same entry point:
 ```bash
 python benchmarks/musa_bench.py --suite short
 python benchmarks/musa_bench.py --suite all --output-dir bench-results
-python benchmarks/musa_bench.py --suite mcu --batch 1 --width 1024
-python benchmarks/musa_bench.py --suite profile --batch 1 --width 1024
+python benchmarks/musa_bench.py --suite short --profile
 ```
 
 For graph capture of the low-batch multi-CTA path, warm up once on the same

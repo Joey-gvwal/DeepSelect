@@ -34,15 +34,11 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--iters", type=int, default=5)
-    parser.add_argument("--rounds", type=int, default=3)
-    parser.add_argument("--flush-mb", type=int, default=8000)
     parser.add_argument(
         "--benchmark",
-        choices=("capability", "sampling", "fp32_parts"),
-        default="capability",
+        choices=("short", "wide", "all"),
+        default="short",
     )
-    parser.add_argument("--batches")
-    parser.add_argument("--widths")
     args = parser.parse_args()
     checkout = Path(__file__).resolve().parents[1]
     output = args.output.resolve()
@@ -107,16 +103,7 @@ def main() -> None:
             str(args.warmup),
             "--iters",
             str(args.iters),
-            "--rounds",
-            str(args.rounds),
-            "--flush-mb",
-            str(args.flush_mb),
         ]
-        if args.benchmark == "sampling":
-            if args.batches:
-                benchmark_argv.extend(("--batches", args.batches))
-            if args.widths:
-                benchmark_argv.extend(("--widths", args.widths))
         benchmark_log = _run(
             benchmark_argv,
             cwd=tmp,

@@ -342,8 +342,11 @@ else:
 setup(
     name=DIST_NAME,
     version=VERSION,
-    description="High-performance TopK kernels for DeepSeek Sparse Attention (DSA) and samplers",
+    description="High-performance TopK kernels for DeepSeek Sparse Attention (DSA) and samplers (MUSA build)",
+    long_description=(Path(__file__).resolve().parent / "README.md").read_text(encoding="utf-8"),
+    long_description_content_type="text/markdown",
     license="MIT",
+    url="https://github.com/MooreThreads/DeepSelect",
     python_requires=">=3.10",
     packages=find_packages(include=['deep_select']),
     ext_modules=ext_modules,

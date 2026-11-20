@@ -95,14 +95,12 @@ def main() -> None:
         )
         bench_env = dict(env)
         bench_env.pop("PYTHONPATH", None)
-        benchmark_script = {
-            "capability": "musa_capability_bench.py",
-            "sampling": "musa_sampling_bench.py",
-            "fp32_parts": "musa_fp32_parts_bench.py",
-        }[args.benchmark]
+        benchmark_script = "musa_bench.py"
         benchmark_argv = [
             sys.executable,
             str(source / "benchmarks" / benchmark_script),
+            "--suite",
+            args.benchmark,
             "--output",
             str(output),
             "--warmup",

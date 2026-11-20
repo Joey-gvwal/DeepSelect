@@ -150,6 +150,90 @@ __device__ __forceinline__ void warp_select(
   }
 }
 
+template <typename OutIndexT>
+__global__ void topk_bf16_short_kernel(
+    const __mt_bfloat16* __restrict__ input, OutIndexT* __restrict__ output,
+    int width, int64_t input_stride, int64_t output_stride, int topk,
+    bool abort_when_nan_found) {
+  __shared__ uint16_t keys[4096];
+  __shared__ int histogram[kRadix];
+  __shared__ int threshold_hi;
+  __shared__ int remain_hi;
+  __shared__ int threshold_lo;
+  __shared__ int remain_lo;
+  __shared__ int output_count;
+  __shared__ int nan_count;
+
+  const int tid = static_cast<int>(threadIdx.x);
+  const int row = static_cast<int>(blockIdx.x);
+  const __mt_bfloat16* row_input = input + static_cast<int64_t>(row) * input_stride;
+  OutIndexT* row_output = output + static_cast<int64_t>(row) * output_stride;
+
+  if (tid < kRadix) histogram[tid] = 0;
+  if (tid == 0) {
+    output_count = 0;
+    nan_count = 0;
+  }
+  __syncthreads();
+
+  for (int index = tid; index < width; index += blockDim.x) {
+    const uint16_t bits = raw_bits(row_input[index]);
+    if (is_nan_key(bits)) {
+      atomicAdd(&nan_count, 1);
+      keys[index] = 0;
+    } else {
+      const uint16_t key = ordered_key_from_bits(bits);
+      keys[index] = key;
+      atomicAdd(&histogram[key >> 8], 1);
+    }
+  }
+  __syncthreads();
+
+  if (nan_count != 0) {
+    if (tid == 0) row_output[0] = static_cast<OutIndexT>(kNanSentinel);
+    if (abort_when_nan_found) __syncthreads();
+    return;
+  }
+
+  if (width <= topk) {
+    for (int index = tid; index < width; index += blockDim.x)
+      row_output[index] = static_cast<OutIndexT>(index);
+    return;
+  }
+
+  warp_select(histogram, topk, &threshold_hi, &remain_hi);
+  __syncthreads();
+
+  if (tid < kRadix) histogram[tid] = 0;
+  __syncthreads();
+  for (int index = tid; index < width; index += blockDim.x) {
+    const uint16_t key = keys[index];
+    if ((key >> 8) == threshold_hi)
+      atomicAdd(&histogram[key & 0xFFu], 1);
+  }
+  __syncthreads();
+  warp_select(histogram, remain_hi, &threshold_lo, &remain_lo);
+  __syncthreads();
+
+  if (tid == 0) output_count = 0;
+  __syncthreads();
+  for (int index = tid; index < width; index += blockDim.x) {
+    const uint16_t key = keys[index];
+    const int hi = key >> 8;
+    const int lo = key & 0xFFu;
+    const bool selected = hi > threshold_hi ||
+        (hi == threshold_hi && lo > threshold_lo);
+    if (hi == threshold_hi && lo == threshold_lo) {
+      const int previous = atomicAdd(&remain_lo, -1);
+      if (previous > 0)
+        row_output[topk - previous] = static_cast<OutIndexT>(index);
+    } else if (selected) {
+      const int slot = atomicAdd(&output_count, 1);
+      if (slot < topk) row_output[slot] = static_cast<OutIndexT>(index);
+    }
+  }
+}
+
 __device__ __forceinline__ void block_select_4096(
     int* histogram, int wanted, int* threshold, int* remain,
     int* group_sums, int* group_threshold, int* group_remain) {
@@ -1294,7 +1378,16 @@ void launch_topk_bf16_typed(
     int64_t width, int64_t input_stride, int64_t output_stride,
     __mt_bfloat16* values, int64_t value_stride, const int* end_ptr,
     OutIndexT idx_fill, __mt_bfloat16 value_fill, int topk,
-    bool return_value, musaStream_t stream) {
+    bool return_value, bool abort_when_nan_found, musaStream_t stream) {
+  const bool use_short = rows <= 8 && width <= 2048 && topk <= 1024 &&
+      topk <= width && end_ptr == nullptr && input_stride == width &&
+      values == nullptr && !return_value && !abort_when_nan_found;
+  if (use_short) {
+    topk_bf16_short_kernel<OutIndexT><<<rows, 256, 0, stream>>>(
+        input_ptr, output_ptr, static_cast<int>(width), input_stride,
+        output_stride, topk, abort_when_nan_found);
+    return;
+  }
   const int threads = select_threads(rows, width);
   const bool use_sample_survivor =
       rows >= 512 && width >= 65536 && topk == 512 && end_ptr == nullptr &&
@@ -3430,13 +3523,13 @@ void launch_topk_bf16(
         input_ptr, output.data_ptr<int32_t>(), rows, width, input_stride,
         output_stride, value_ptr, value_stride, end_ptr,
         static_cast<int32_t>(idx_fill64), fill_bits.value, topk,
-        output_value.has_value(), stream);
+        output_value.has_value(), abort_when_nan_found, stream);
   else
     launch_topk_bf16_typed(
         input_ptr, output.data_ptr<int64_t>(), rows, width, input_stride,
         output_stride, value_ptr, value_stride, end_ptr,
         static_cast<int64_t>(idx_fill64), fill_bits.value, topk,
-        output_value.has_value(), stream);
+        output_value.has_value(), abort_when_nan_found, stream);
   if (abort_when_nan_found) {
     if (output.scalar_type() == at::kInt)
       launch_nan_guard(output.data_ptr<int32_t>(), rows, output_stride, stream);
@@ -3612,15 +3705,17 @@ __device__ __forceinline__ void persist_level_hist(
     const typename PersistBf16::Vec vec = vp[c];
 #pragma unroll
     for (int j = 0; j < kV; ++j) {
-      const unsigned k = PersistBf16::key(vec.v[j]);
-      if (kFiltShift == 0) nan_count += (k >= 0xFFC0u) | (k <= 0x003Fu);
+      const PersistBf16::Elem value = vec.v[j];
+      const unsigned k = PersistBf16::key(value);
+      if (kFiltShift == 0) nan_count += PersistBf16::is_nan(value);
       if (kFiltShift != 0 && (k >> kFiltShift) != prefix) continue;
       atomicAdd(&s_lvl[(k >> kShift) & kMask], 1);
     }
   }
   for (int i = start + nfull * kV + tid; i < end; i += kThreads) {
-    const unsigned k = PersistBf16::key(row[i]);
-    if (kFiltShift == 0) nan_count += (k >= 0xFFC0u) | (k <= 0x003Fu);
+    const PersistBf16::Elem value = row[i];
+    const unsigned k = PersistBf16::key(value);
+    if (kFiltShift == 0) nan_count += PersistBf16::is_nan(value);
     if (kFiltShift != 0 && (k >> kFiltShift) != prefix) continue;
     atomicAdd(&s_lvl[(k >> kShift) & kMask], 1);
   }

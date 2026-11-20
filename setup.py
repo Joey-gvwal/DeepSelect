@@ -1,6 +1,5 @@
 import os
 import subprocess
-from datetime import datetime
 from pathlib import Path
 
 from setuptools import setup, find_packages
@@ -8,6 +7,42 @@ from setuptools import setup, find_packages
 import tests.kernelkit as kk
 
 exec(open("deep_select/__version__.py").read())
+
+
+def _resolve_version() -> str:
+    """Return the single distribution version shared by metadata and wheel.
+
+    The version must be computed exactly once and must not depend on the current
+    time: pip >= 25 validates the produced wheel filename against metadata, and
+    setup.py is invoked more than once per PEP 517 build.
+
+    Priority:
+    1. ``DEEP_SELECT_VERSION`` - full PEP 440 version (public[+local]) injected by
+       release CI, e.g. ``0.0.1+musa5.2.0torch2.11.0.post1``.
+    2. public ``__version__`` + ``DEEP_SELECT_LOCAL_LABEL``
+       (e.g. ``musa5.2.0torch2.11.0.post1``).
+    3. public ``__version__`` + ``g<git sha>`` for local development builds.
+    """
+    env_version = os.environ.get("DEEP_SELECT_VERSION", "").strip()
+    if env_version:
+        return env_version
+    local_label = os.environ.get("DEEP_SELECT_LOCAL_LABEL", "").strip()
+    if local_label:
+        return f"{__version__}+{local_label}"
+    try:
+        rev = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except Exception:
+        rev = "nogit"
+    return f"{__version__}+g{rev}"
+
+
+DIST_NAME = os.environ.get("DEEP_SELECT_DIST_NAME", "deep_select")
+VERSION = _resolve_version()
+print(f"Building {DIST_NAME} {VERSION}")
 
 CUDA_SOURCES = [
     "csrc/api.cpp",
@@ -294,16 +329,6 @@ if overrided_platform is not None:
     build_target_platform = overrided_platform_dict[overrided_platform]
 print(f"Build target: {build_target_platform}")
 
-try:
-    cmd = ['git', 'rev-parse', '--short', 'HEAD']
-    git_rev = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode('ascii').rstrip()
-except Exception:
-    # e.g. building from a source tarball that has no `.git`. Keep the version
-    # a valid PEP 440 local version in that case.
-    git_rev = "unknown"
-
-datetime_rev = datetime.now().strftime("%Y%m%d.%H%M%S")
-
 if build_target_platform == kk.Platform.CUDA:
     ext_modules, build_ext = build_on_cuda_platform()
 elif build_target_platform == kk.Platform.ASCEND:
@@ -315,10 +340,19 @@ else:
 
 
 setup(
-    name="deep_select",
-    version=f"{__version__}+{git_rev}.{datetime_rev}",
+    name=DIST_NAME,
+    version=VERSION,
+    description="High-performance TopK kernels for DeepSeek Sparse Attention (DSA) and samplers",
+    license="MIT",
+    python_requires=">=3.10",
     packages=find_packages(include=['deep_select']),
     ext_modules=ext_modules,
     cmdclass={"build_ext": build_ext},
     zip_safe=False,
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "Operating System :: POSIX :: Linux",
+        "Environment :: GPU :: MTHREADS MUSA",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    ],
 )

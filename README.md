@@ -45,7 +45,7 @@ The CUDA and MUSA implementations support both `torch.float32` and
 
 The CUDA and Ascend graphs use the benchmark in [`tests/test.py`](tests/test.py).
 The MUSA graph uses the unified [`benchmarks/musa_bench.py`](benchmarks/musa_bench.py)
-entry point (`--suite library`).
+entry point (`--suite wide`).
 All graphs compare against `torch.topk` on the same device and input. The
 metric is effective memory bandwidth: TopK does no floating-point math, so a
 FLOP rate would not be meaningful here.
@@ -141,16 +141,15 @@ index offset, both sorting modes, and NaN abort. Selection, short-row copy/fill,
 sorting, offset, and the NaN guard all run in the MUSA C++/`.mu` extension; no
 TileLang or PyTorch TopK fallback is used for those calls.
 
-The capability matrix is available through
-[`benchmarks/musa_bench.py`](benchmarks/musa_bench.py) with
-`--suite capability`; it compares representative combinations with `torch.topk`
-and checks selected values and indices for every case.
+Public-API correctness for representative shape/dtype combinations is covered by
+[`tests/test_musa_backend.py`](tests/test_musa_backend.py); the benchmark entry
+point reports the value-difference check for every measured case.
 
-All MUSA benchmark suites share the same entry point:
+All MUSA benchmark suites share the same entry point (`short`, `wide`, or `all`):
 
 ```bash
 python benchmarks/musa_bench.py --suite short
-python benchmarks/musa_bench.py --suite all --output-dir bench-results
+python benchmarks/musa_bench.py --suite all --output bench-results/all.json
 python benchmarks/musa_bench.py --suite short --profile
 ```
 

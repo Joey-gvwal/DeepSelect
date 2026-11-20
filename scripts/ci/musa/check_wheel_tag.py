@@ -129,14 +129,15 @@ def main() -> int:
                         problems.append(
                             f"_build_info.PUBLIC_VERSION {info['PUBLIC_VERSION']!r} != {parsed.public!r}"
                         )
-                    if info.get("BUILD_TORCH_PUBLIC") and f"torch{info['BUILD_TORCH_PUBLIC']}" not in local:
-                        problems.append(
-                            f"_build_info.BUILD_TORCH_PUBLIC {info['BUILD_TORCH_PUBLIC']!r} not in local {local!r}"
-                        )
-                    if info.get("BUILD_MUSA_SDK") and f"musa{info['BUILD_MUSA_SDK']}" not in local:
-                        problems.append(
-                            f"_build_info.BUILD_MUSA_SDK {info['BUILD_MUSA_SDK']!r} not in local {local!r}"
-                        )
+                    if local:
+                        if info.get("BUILD_TORCH_PUBLIC") and f"torch{info['BUILD_TORCH_PUBLIC']}" not in local:
+                            problems.append(
+                                f"_build_info.BUILD_TORCH_PUBLIC {info['BUILD_TORCH_PUBLIC']!r} not in local {local!r}"
+                            )
+                        if info.get("BUILD_MUSA_SDK") and f"musa{info['BUILD_MUSA_SDK']}" not in local:
+                            problems.append(
+                                f"_build_info.BUILD_MUSA_SDK {info['BUILD_MUSA_SDK']!r} not in local {local!r}"
+                            )
     except zipfile.BadZipFile:
         problems.append("not a zip/wheel file")
     except StopIteration:

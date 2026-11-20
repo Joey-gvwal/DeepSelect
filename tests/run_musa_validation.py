@@ -57,11 +57,10 @@ def main() -> None:
             [
                 sys.executable,
                 "-m",
-                "pip",
-                "wheel",
-                "--no-build-isolation",
-                "--no-deps",
-                "--wheel-dir",
+                "build",
+                "--wheel",
+                "--no-isolation",
+                "--outdir",
                 str(wheel_dir),
                 ".",
             ],
@@ -69,7 +68,7 @@ def main() -> None:
             env=env,
         )
         logs.append(build.stdout)
-        wheels = list(wheel_dir.glob("deep_select-*.whl"))
+        wheels = sorted(wheel_dir.glob("deep_select-*.whl")) + sorted(wheel_dir.glob("deepselect_musa-*.whl"))
         if len(wheels) != 1:
             raise RuntimeError(f"expected one wheel, found {wheels}")
         wheel = wheels[0]

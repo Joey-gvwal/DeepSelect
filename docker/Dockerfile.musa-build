@@ -1,0 +1,52 @@
+# DeepSelect / MUSA 5.2 wheel 构建镜像（0.0.1 发布线）
+#
+# 基镜像：sglang-ci-runner:musa52-py310-v2-stack
+#   torch 2.11.0.post1+musa5.2.0 / torch_musa 2.11.0.post1+musa5.2.0 /
+#   MUSA SDK 5.2 (MUSA_HOME=/usr/local/musa) / mcc / Python 3.10。
+# 生产使用时把 BASE_IMAGE 换成按 digest 固定的镜像。
+ARG BASE_IMAGE=sglang-ci-runner:musa52-py310-v2-stack
+FROM ${BASE_IMAGE}
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV MUSA_HOME=/usr/local/musa \
+    PATH=/usr/local/musa/bin:${PATH} \
+    LD_LIBRARY_PATH=/usr/local/musa/lib:/usr/local/musa/mudnn/lib: \
+    TORCH_MUSA_ARCH_LIST=31 \
+    MATE_MUSA_ARCH_LIST=3.1 \
+    DEEP_SELECT_BUILD_TARGET_PLATFORM=MUSA \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONUNBUFFERED=1
+
+# Build tooling (system-wide; the MUSA torch stack in the image user site is
+# untouched). `build` drives PEP 517 wheel creation.
+USER root
+RUN python3 -m pip install --no-cache-dir \
+        "setuptools>=68" "wheel>=0.41" "build>=1.2" "auditwheel>=6.1" "patchelf>=0.17"
+
+# Build entrypoint + helper scripts.
+COPY scripts/ci/musa/build_wheel.sh /usr/local/bin/build-deepselect-musa
+COPY scripts/ci/musa/compose_wheel_tag.py /usr/local/bin/compose_wheel_tag.py
+COPY scripts/ci/musa/gen_build_info.py /usr/local/bin/gen_build_info.py
+COPY scripts/ci/musa/check_wheel_tag.py /usr/local/bin/check_wheel_tag.py
+COPY scripts/ci/musa/smoke_test.py /usr/local/bin/smoke_test.py
+RUN chmod 0755 /usr/local/bin/build-deepselect-musa \
+        /usr/local/bin/compose_wheel_tag.py \
+        /usr/local/bin/gen_build_info.py \
+        /usr/local/bin/check_wheel_tag.py \
+        /usr/local/bin/smoke_test.py \
+    && mkdir -p /out /src \
+    && chown mccxadmin:mccxadmin /out /src
+
+USER mccxadmin
+WORKDIR /src
+
+# Fail the image build early if the MUSA Python stack is incomplete.
+RUN python3 -c "import torch, torch_musa; \
+print('torch', torch.__version__); print('torch_musa', torch_musa.__version__); \
+assert torch.__version__.startswith('2.11.0.post1+musa5.2.0'), torch.__version__; \
+assert torch_musa.__version__.startswith('2.11.0.post1+musa5.2.0'), torch_musa.__version__"
+
+VOLUME ["/out"]
+ENTRYPOINT ["/usr/local/bin/build-deepselect-musa"]
+CMD ["--src", "/src/DeepSelect", "--out", "/out"]

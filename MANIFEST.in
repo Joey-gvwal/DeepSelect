@@ -1,0 +1,25 @@
+# DeepSelect MUSA source distribution contents.
+#
+# The prebuilt wheel is the supported distribution form (see WHEEL-TAG-SPEC);
+# this sdist is kept buildable for MUSA source installs once the submodule
+# content is materialized. CUTLASS is only needed by the CUDA backend and is
+# therefore pruned.
+include LICENSE
+include README.md
+include CHANGELOG.md
+
+include csrc/musa_kernels/*.mu
+graft csrc/3rdparty/mutlass/include
+graft csrc/3rdparty/mutlass/LICENSE*
+include csrc/3rdparty/mutlass/README.md
+
+# setup.py imports tests.kernelkit at build time.
+graft tests/kernelkit
+include tests/__init__.py
+
+prune csrc/3rdparty/cutlass
+prune csrc/cuda_kernels
+prune csrc/ascend_kernels
+prune assets
+prune benchmarks
+prune docs

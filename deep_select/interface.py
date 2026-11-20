@@ -30,12 +30,19 @@ def _import_backend():
     else:
         name, target = "deep_select_cuda", "CUDA"
     try:
-        return importlib.import_module(f".{name}", __package__)
+        backend = importlib.import_module(f".{name}", __package__)
     except ImportError as e:
         raise ImportError(
             f"DeepSelect: failed to load the backend `{__package__}.{name}`. "
             f"Build it with DEEP_SELECT_BUILD_TARGET_PLATFORM={target}."
         ) from e
+    if target == "MUSA":
+        # Prebuilt wheels are built against one exact MUSA/torch stack; fail
+        # early with an actionable error instead of crashing in a kernel launch.
+        from ._compat import check as _check_compat
+
+        _check_compat()
+    return backend
 
 _backend = _import_backend()
 

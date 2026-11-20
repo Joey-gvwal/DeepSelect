@@ -1,0 +1,208 @@
+name: release-musa
+
+# 设计草案（v0.2，基于 2026-11-20 mccx-204 spike 的实测配方）。
+# 名字、路径、secrets 以仓库实际为准。
+#
+# 触发：手工 workflow_dispatch（推荐，torchada 式小步发布）或 push tag v*。
+# 安全：自托管 runner 只接 tag/dispatch；PR 不发这里（见 DESIGN.md §6.2）。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "公开版本号（PEP 440，无 local label），例如 1.1.0"
+        required: true
+        type: string
+      ref:
+        description: "要发布的 git ref/SHA（默认当前分支 HEAD）"
+        required: false
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-musa-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1) 真实 S5000 上构建 + 全量测试（自托管 runner，MUSA 5.2 环境）。
+  # ---------------------------------------------------------------------------
+  build-and-test:
+    name: build+test (musa52 / torch211 / py${{ matrix.python }})
+    # 标签需与 DeepSelect 新注册的 runner 对齐（现有 mccx-204 runner 属 sgl-project/sglang）。
+    runs-on: [self-hosted, linux, x64, musa52, s5000]
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # P0 只发 py3.10；py3.12 需要 `sglang-ci-runner:musa52-py312-v2-stack` 基镜像，
+          # 作为 P1 项（同时加 -torch213 矩阵行）。
+          - python: "3.10"
+            image: deepselect-build-musa:musa52-py310
+    steps:
+      - uses: actions/checkout@v4
+        continue-on-error: true      # 见下方 codeload 兜底（mccx-204 上 git 访问 github 会挂起）
+        with:
+          submodules: recursive
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Ensure build image (build once, cached afterwards)
+        run: |
+          set -euo pipefail
+          docker build --network=host -t "${{ matrix.image }}" \
+            -f docker/Dockerfile.musa-build .
+
+      # 实测坑：mccx-204 上 `git clone/fetch github` 会挂起（curl 正常）。
+      # checkout 失败时用 codeload tarball 兜底；子模块由 build_wheel.sh 的 codeload 兜底。
+      - name: Fallback source fetch (codeload tarball)
+        if: failure()
+        run: |
+          set -euo pipefail
+          SHA="${{ github.sha }}"
+          curl -fsSL "https://codeload.github.com/MooreThreads/DeepSelect/tar.gz/$SHA" -o /tmp/src.tar.gz
+          tar xzf /tmp/src.tar.gz -C "$RUNNER_TEMP"
+          rm -rf "$GITHUB_WORKSPACE" && mv "$RUNNER_TEMP"/DeepSelect-* "$GITHUB_WORKSPACE"
+
+      - name: Resolve public version
+        id: ver
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.version }}" ]; then V="${{ inputs.version }}"; else V="${GITHUB_REF_NAME#v}"; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "release_tag=v$V" >> "$GITHUB_OUTPUT"
+
+      - name: Build wheel in pinned build image
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/dist/py${{ matrix.python }}"
+          mkdir -p "$OUT"
+          docker run --rm --network host \
+            -e DEEP_SELECT_PUBLIC_VERSION="${{ steps.ver.outputs.version }}" \
+            -v "$PWD:/src/DeepSelect:ro" -v "$OUT:/out" \
+            "${{ matrix.image }}" --src /src/DeepSelect --out /out
+          test -n "$(ls "$OUT"/deep_select-*.whl "$OUT"/deepselect_musa-*.whl 2>/dev/null || true)"
+
+      - name: GPU gate (install + smoke + project regression)
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/dist/py${{ matrix.python }}"
+          WHEEL=$(ls "$OUT"/deep_select-*.whl "$OUT"/deepselect_musa-*.whl | head -1)
+          docker run --rm \
+            --runtime=mthreads --network=host --shm-size=32g \
+            -e MTHREADS_VISIBLE_DEVICES=0 \
+            -v "$WHEEL:/tmp/deepselect.whl:ro" \
+            -v "$PWD/scripts/ci/musa:/opt/ci:ro" \
+            -v "$PWD/tests:/opt/deepselect-tests:ro" \
+            "${{ matrix.image }}" bash -lc '
+              set -euo pipefail
+              python3 -m pip install --no-deps --force-reinstall --no-index /tmp/deepselect.whl
+              python3 /opt/ci/smoke_test.py --expected-local-label musa5.2.0torch2.11.0.post1 \
+                  --expected-torch-musa 2.11.0.post1 --output /tmp/smoke.json
+              cd /opt/deepselect-tests
+              python3 test_musa_backend.py
+              python3 test_musa_tme_survivor.py
+            '
+
+      - name: Upload release candidates
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepselect-musa-py${{ matrix.python }}
+          path: ${{ runner.temp }}/dist/py${{ matrix.python }}/*
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # 2) 发布：GitHub Release 资产（deepselect-whl 仓库）+ gh-pages 静态索引。
+  #    在 GitHub 托管 runner 上跑，不接触内网构建机。
+  #    注：PyPI sdist 暂不发布（当前 sdist 不可构建，见 DESIGN.md §8.2）。
+  # ---------------------------------------------------------------------------
+  publish:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    environment: release            # 建议 required reviewers，防误发
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Verify checksums
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, pathlib, sys
+          bad = []
+          for sums in pathlib.Path("dist").glob("**/SHA256SUMS"):
+              for line in sums.read_text().splitlines():
+                  digest, name = line.split()
+                  p = sums.parent / name
+                  if p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest() != digest:
+                      bad.append(str(p))
+          sys.exit(f"checksum mismatch: {bad}" if bad else 0)
+          PY
+
+      - name: Create GitHub release + upload assets (deepselect-whl)
+        env:
+          GH_TOKEN: ${{ secrets.WHL_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          V="${{ needs.build-and-test.outputs.version }}"
+          gh release view "v$V" --repo MooreThreads/deepselect-whl >/dev/null 2>&1 \
+            || gh release create "v$V" --repo MooreThreads/deepselect-whl \
+                 --title "DeepSelect MUSA $V" --notes-file docs/release-notes-musa.md
+          gh release upload "v$V" --repo MooreThreads/deepselect-whl --clobber \
+            $(find dist -name '*.whl') $(find dist -name 'SHA256SUMS')
+
+      - name: Update static wheel index (gh-pages)
+        env:
+          GH_TOKEN: ${{ secrets.WHL_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          git clone --branch gh-pages \
+            "https://x-access-token:${GH_TOKEN}@github.com/MooreThreads/deepselect-whl.git" deepselect-whl
+          python3 scripts/ci/update_whl_index.py --dist dist --repo deepselect-whl
+          cd deepselect-whl
+          git config user.name  "deepselect-bot"
+          git config user.email "deepselect-bot@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || {
+            git commit -m "index: deepselect-musa ${{ needs.build-and-test.outputs.version }}+musa52"
+            git push
+          }
+
+  # ---------------------------------------------------------------------------
+  # 3) 发布后闭环验证：从公开索引全新安装 + smoke，证据归档。
+  # ---------------------------------------------------------------------------
+  verify-from-index:
+    needs: publish
+    runs-on: [self-hosted, linux, x64, musa52, s5000]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fresh install from static index
+        run: |
+          set -euo pipefail
+          python3 -m pip install --no-deps --force-reinstall \
+            --index-url https://moorethreads.github.io/deepselect-whl/musa52-torch211/ \
+            "deepselect-musa==${{ needs.build-and-test.outputs.version }}+musa5.2.0torch2.11.0.post1"
+      - name: Evidence
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          python3 scripts/ci/musa/smoke_test.py --expected-local-label musa5.2.0torch2.11.0.post1 \
+              --expected-torch-musa 2.11.0.post1 --output evidence/postpublish-smoke.json \
+            | tee evidence/postpublish-smoke.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: postpublish-evidence
+          path: evidence/

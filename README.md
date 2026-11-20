@@ -104,11 +104,24 @@ git submodule update --init --recursive
 pip install -v .
 ```
 
-For MUSA, build the native MUSA extension explicitly:
+For MUSA, prebuilt wheels for the supported stack (MUSA SDK 5.2,
+`torch`/`torch_musa` 2.11.0.post1, Python 3.10) are published through the
+DeepSelect wheel index:
+
+```bash
+pip install --index-url https://moorethreads.github.io/deepselect-whl/musa52-torch211/ \
+  "deepselect-musa==0.0.1+musa5.2.0torch2.11.0.post1"
+python -m deep_select.compat
+```
+
+To build the native MUSA extension from source instead:
 
 ```bash
 DEEP_SELECT_BUILD_TARGET_PLATFORM=MUSA python3 -m pip install -v .
 ```
+
+See [`docs/install-musa.md`](docs/install-musa.md) for prerequisites,
+verification, and troubleshooting.
 
 ## Usage
 

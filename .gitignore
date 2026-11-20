@@ -9,3 +9,7 @@ compile_commands.json
 .cache
 /dev
 /.clangd
+deep_select/_build_info.py
+bench-results/
+.venv/
+*.tar.gz

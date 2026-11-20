@@ -1,0 +1,11 @@
+# DeepSelect 的 PEP 517 最小构建声明（设计草案）。
+#
+# 目前 repo 只有 setup.py；加上这个文件后 `pip wheel .` 会走 PEP 517，
+# metadata 与 wheel 都由 setup.py 提供（legacy 模式），同时保持 `--no-build-isolation`
+# 构建（torch_musa 不在 PyPI，无法在隔离环境里装依赖）。
+#
+# Phase 2 可把 [project] 元数据迁到这里；Phase 1 保持 setup.py 为唯一真源，
+# 因为版本号需要由 CI 环境变量注入（DEEP_SELECT_VERSION / DEEP_SELECT_VERSION_LOCAL）。
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"

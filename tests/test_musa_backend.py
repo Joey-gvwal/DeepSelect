@@ -167,6 +167,22 @@ def _run_nan_cases() -> None:
             abort_when_nan_found=True,
         )
         assert torch.all(short_indices[:, 0] == 0).item()
+
+    # Exercise the persistent BF16 path with a signaling NaN.  NaN detection
+    # must cover every non-zero mantissa payload, not only quiet-NaN ranges.
+    raw = torch.zeros((1, 16384), dtype=torch.int16)
+    raw[:, 17] = 32641  # 0x7f81: BF16 signaling NaN
+    persistent_input = raw.view(torch.bfloat16).to("musa")
+    _, persistent_indices = deep_select.topk(
+        persistent_input,
+        512,
+        indices_type=torch.int32,
+        return_value=False,
+        abort_when_nan_found=False,
+    )
+    assert torch.all(persistent_indices[:, 0] == 0x3F3F3F3F).item()
+
+
 def _assert_indices_select_topk(
     input: torch.Tensor,
     topk: int = 512,

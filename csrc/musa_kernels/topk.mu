@@ -3705,15 +3705,17 @@ __device__ __forceinline__ void persist_level_hist(
     const typename PersistBf16::Vec vec = vp[c];
 #pragma unroll
     for (int j = 0; j < kV; ++j) {
-      const unsigned k = PersistBf16::key(vec.v[j]);
-      if (kFiltShift == 0) nan_count += (k >= 0xFFC0u) | (k <= 0x003Fu);
+      const PersistBf16::Elem value = vec.v[j];
+      const unsigned k = PersistBf16::key(value);
+      if (kFiltShift == 0) nan_count += PersistBf16::is_nan(value);
       if (kFiltShift != 0 && (k >> kFiltShift) != prefix) continue;
       atomicAdd(&s_lvl[(k >> kShift) & kMask], 1);
     }
   }
   for (int i = start + nfull * kV + tid; i < end; i += kThreads) {
-    const unsigned k = PersistBf16::key(row[i]);
-    if (kFiltShift == 0) nan_count += (k >= 0xFFC0u) | (k <= 0x003Fu);
+    const PersistBf16::Elem value = row[i];
+    const unsigned k = PersistBf16::key(value);
+    if (kFiltShift == 0) nan_count += PersistBf16::is_nan(value);
     if (kFiltShift != 0 && (k >> kFiltShift) != prefix) continue;
     atomicAdd(&s_lvl[(k >> kShift) & kMask], 1);
   }
